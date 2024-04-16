@@ -4,7 +4,6 @@
 # 保留某些文件
 !.gitignore
 !*.h
-!*.h
 !*.c
 
 /config_components.h
