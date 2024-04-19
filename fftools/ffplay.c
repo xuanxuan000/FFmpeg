@@ -202,29 +202,39 @@ typedef struct Decoder {
 } Decoder;
 
 typedef struct VideoState {
+    // SDL 是 Simple DirectMedia Layer 的缩写，是一个跨平台的多媒体开发库，提供了对图形、音频、输入设备、定时器等多种功能的封装和管理。
+    // 指向SDL线程的指针，用于读取线程
     SDL_Thread *read_tid;
+    // [libavformat] 指向输入视频格式的指针   libavformat的结构体,用于文件 I/O 和 封装/解封装
     const AVInputFormat *iformat;
     int abort_request;
     int force_refresh;
     int paused;
     int last_paused;
     int queue_attachments_req;
+    // 跳转相关
     int seek_req;
     int seek_flags;
     int64_t seek_pos;
     int64_t seek_rel;
+
     int read_pause_return;
+    // [libavformat] AVFormatContext 结构体，表示封装格式上下文   
     AVFormatContext *ic;
+    // 是否实时播放
     int realtime;
 
+    // 时钟结构体，用于音频、视频、外部时钟
     Clock audclk;
     Clock vidclk;
     Clock extclk;
 
+    // 帧队列，分别用于存储视频、字幕、音频帧
     FrameQueue pictq;
     FrameQueue subpq;
     FrameQueue sampq;
 
+    // 解码器结构体，分别用于音频、视频、字幕解码
     Decoder auddec;
     Decoder viddec;
     Decoder subdec;
@@ -239,8 +249,12 @@ typedef struct VideoState {
     double audio_diff_avg_coef;
     double audio_diff_threshold;
     int audio_diff_avg_count;
+
+    // [libavformat] 音频流
     AVStream *audio_st;
+    // 音频包队列
     PacketQueue audioq;
+    // 音频缓冲区相关
     int audio_hw_buf_size;
     uint8_t *audio_buf;
     uint8_t *audio_buf1;
@@ -248,32 +262,55 @@ typedef struct VideoState {
     unsigned int audio_buf1_size;
     int audio_buf_index; /* in bytes */
     int audio_write_buf_size;
+
+    // 音量
     int audio_volume;
+    // 是否静音
     int muted;
+
+    // 音频参数
     struct AudioParams audio_src;
     struct AudioParams audio_filter_src;
     struct AudioParams audio_tgt;
+
+    // 音频重采样是指将音频信号从一个采样率转换为另一个采样率的过程
+    // 重采样的过程通常涉及插值、抽取或过滤等技术，以确保在转换过程中尽量减少失真和伪像
+    // SwrContext 结构体，用于音频重采样
     struct SwrContext *swr_ctx;
+
+    // 早期和晚期帧丢弃计数
     int frame_drops_early;
     int frame_drops_late;
 
+    // 显示模式
     enum ShowMode {
         SHOW_MODE_NONE = -1, SHOW_MODE_VIDEO = 0, SHOW_MODE_WAVES, SHOW_MODE_RDFT, SHOW_MODE_NB
     } show_mode;
+    // 采样数组
     int16_t sample_array[SAMPLE_ARRAY_SIZE];
     int sample_array_index;
+
+    // 上一次 I 帧的起始位置
     int last_i_start;
+    // 用于变换的上下文
     AVTXContext *rdft;
+    // 变换函数指针
     av_tx_fn rdft_fn;
     int rdft_bits;
+    // 实部数据
     float *real_data;
+    // 变换数据
     AVComplexFloat *rdft_data;
     int xpos;
+    // 上次可见时间
     double last_vis_time;
+
+    // 可视,字幕,视频纹理
     SDL_Texture *vis_texture;
     SDL_Texture *sub_texture;
     SDL_Texture *vid_texture;
 
+    // 字幕流相关
     int subtitle_stream;
     AVStream *subtitle_st;
     PacketQueue subtitleq;
@@ -281,10 +318,16 @@ typedef struct VideoState {
     double frame_timer;
     double frame_last_returned_time;
     double frame_last_filter_delay;
+
+    // 视频流相关
     int video_stream;
     AVStream *video_st;
     PacketQueue videoq;
+    
+    // 最大帧持续时间
     double max_frame_duration;      // maximum duration of a frame - above this, we consider the jump a timestamp discontinuity
+    
+    // 字幕转换上下文
     struct SwsContext *sub_convert_ctx;
     int eof;
 
@@ -292,6 +335,7 @@ typedef struct VideoState {
     int width, height, xleft, ytop;
     int step;
 
+    // [libavfilter] 过滤器相关
     int vfilter_idx;
     AVFilterContext *in_video_filter;   // the first filter in the video chain
     AVFilterContext *out_video_filter;  // the last filter in the video chain
@@ -299,8 +343,10 @@ typedef struct VideoState {
     AVFilterContext *out_audio_filter;  // the last filter in the audio chain
     AVFilterGraph *agraph;              // audio filter graph
 
+    // 上一个视频、音频、字幕流索引
     int last_video_stream, last_audio_stream, last_subtitle_stream;
 
+    // 继续读取线程的条件变量
     SDL_cond *continue_read_thread;
 } VideoState;
 
@@ -3750,23 +3796,33 @@ int main(int argc, char **argv)
     int flags, ret;
     VideoState *is;
 
+    /*
+    在 Windows 中，当程序加载 DLL 文件时，操作系统会按照一定的搜索顺序来查找 DLL 文件。
+    其中，当前工作目录（Current Working Directory）通常也是默认的搜索路径之一。
+    然而，将当前工作目录包含在 DLL 文件的搜索路径中可能会带来一些安全风险。
+    例如 DLL 劫持（DLL Hijacking）攻击。
+    为了增强安全性，在 init_dynload 中使用了 SetDllDirectory 函数将当前工作目录从 DLL 的搜索路径中移除。
+    */
     init_dynload();
 
     av_log_set_flags(AV_LOG_SKIP_REPEATED);
+    /*static const OptionDef options[]
+    虽然 options 数组被声明为 const，但数组中的元素本身是否可以修改取决于元素类型 OptionDef 是否也被声明为 const。
+    如果 OptionDef 中的成员没有被声明为 const，那么数组中的元素的内容可以被修改，但不能修改数组中的成员。*/
     parse_loglevel(argc, argv, options);
 
     /* register all codecs, demux and protocols */
 #if CONFIG_AVDEVICE
-    avdevice_register_all();
+    avdevice_register_all(); // 注册所有编解码器、协议和设备
 #endif
-    avformat_network_init();
+    avformat_network_init(); // 初始化网络协议
 
-    signal(SIGINT , sigterm_handler); /* Interrupt (ANSI).    */
-    signal(SIGTERM, sigterm_handler); /* Termination (ANSI).  */
+    signal(SIGINT , sigterm_handler); /* Interrupt (ANSI).    */    // Ctrl+C 
+    signal(SIGTERM, sigterm_handler); /* Termination (ANSI).  */    // 终止进程的信号
 
-    show_banner(argc, argv, options);
+    show_banner(argc, argv, options); // 显示程序的帮助信息和版本信息
 
-    ret = parse_options(NULL, argc, argv, options, opt_input_file);
+    ret = parse_options(NULL, argc, argv, options, opt_input_file); // 函数解析命令行参数，并将解析结果存储在全局变量 options 中
     if (ret < 0)
         exit(ret == AVERROR_EXIT ? 0 : 1);
 
