@@ -3834,26 +3834,35 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    if (display_disable) {
+    if (display_disable) {  // 判断是否显示视频
         video_disable = 1;
     }
     flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER;
     if (audio_disable)
-        flags &= ~SDL_INIT_AUDIO;
+        flags &= ~SDL_INIT_AUDIO;   // 移除音频标志
     else {
         /* Try to work around an occasional ALSA buffer underflow issue when the
          * period size is NPOT due to ALSA resampling by forcing the buffer size. */
+        /*ALSA（Advanced Linux Sound Architecture）是 Linux 系统上的一套音频框架，用于管理音频设备的驱动程序、音频数据流以及音频处理。
+        ALSA 提供了一个通用的接口，用于与各种音频硬件交互，并支持复杂的音频操作，如混音、录音、播放、重采样等。*/
+
+        /*缓冲区下溢（Buffer Underflow）是指在处理音频或其他数据流时，缓冲区中的数据量不足，导致无法满足数据读取需求，从而导致播放或处理中断。
+        这种情况可能发生在音频数据流量突然减少、数据处理速度较慢、音频设备的读取频率高于缓冲区的填充速度等情况下。
+        对于音频播放而言，缓冲区下溢通常会导致音频断续、卡顿或噪音。*/
+
+        /*ALSA 重采样问题是指在音频处理过程中，由于采样率不一致或音频数据流的变化，导致 ALSA 需要进行重采样*/
         if (!SDL_getenv("SDL_AUDIO_ALSA_SET_BUFFER_SIZE"))
             SDL_setenv("SDL_AUDIO_ALSA_SET_BUFFER_SIZE","1", 1);
     }
     if (display_disable)
         flags &= ~SDL_INIT_VIDEO;
-    if (SDL_Init (flags)) {
+    if (SDL_Init (flags)) { // 初始化 SDL 库
         av_log(NULL, AV_LOG_FATAL, "Could not initialize SDL - %s\n", SDL_GetError());
         av_log(NULL, AV_LOG_FATAL, "(Did you set the DISPLAY variable?)\n");
         exit(1);
     }
 
+    // 将 SDL_SYSWMEVENT 和 SDL_USEREVENT 类型的事件设置为被忽略（SDL_IGNORE）
     SDL_EventState(SDL_SYSWMEVENT, SDL_IGNORE);
     SDL_EventState(SDL_USEREVENT, SDL_IGNORE);
 
@@ -3888,13 +3897,19 @@ int main(int argc, char **argv)
                 enable_vulkan = 0;
             }
         }
+        // 创建播放窗口
+        // 传入参数包括窗口标题（program_name）、窗口位置（SDL_WINDOWPOS_UNDEFINED 表示系统自动选择位置）、默认宽度、高度、以及窗口标志位（flags）。
         window = SDL_CreateWindow(program_name, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, default_width, default_height, flags);
+        // 线性插值: 假设已知数据点之间的变化是线性的，然后根据这个假设在数据点之间进行插值。
+        // 使用 SDL_SetHint 设置 SDL 渲染的提示参数。在此设置 SDL_HINT_RENDER_SCALE_QUALITY 为 "linear"，表示希望 SDL 使用线性插值以获得更高的渲染质量。
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
         if (!window) {
             av_log(NULL, AV_LOG_FATAL, "Failed to create window: %s", SDL_GetError());
             do_exit(NULL);
         }
-
+        /*Vulkan 是一种低层次的图形 API，旨在提供更直接、更高性能的控制。
+        与 OpenGL 或 DirectX 等传统图形 API 相比，它允许开发者更接近硬件层，并减少 CPU 与 GPU 之间的开销。
+        Vulkan 渲染器是一种用于基于 Vulkan API 实现图形渲染的引擎或组件。*/
         if (vk_renderer) {
             AVDictionary *dict = NULL;
 
@@ -3906,6 +3921,9 @@ int main(int argc, char **argv)
                 av_log(NULL, AV_LOG_FATAL, "Failed to create vulkan renderer, %s\n", av_err2str(ret));
                 do_exit(NULL);
             }
+        /*SDL 渲染器相较于 Vulkan 等底层 API，性能较低，特别是在需要大量并行渲染或复杂图形操作的情况下。
+        SDL 渲染器主要用于 2D 图形，对于 3D 图形和高级效果支持较少。*/
+        // 如果没有 Vulkan 渲染器或 Vulkan 渲染器创建失败，尝试使用 SDL 渲染器。
         } else {
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
             if (!renderer) {
