@@ -97,9 +97,21 @@ void *av_malloc(size_t size)
 {
     void *ptr = NULL;
 
+    // 检查要分配的内存大小是否超过了一个最大分配限制 max_alloc_size。这个限制是为了避免过大的内存分配引起系统资源问题。
     if (size > atomic_load_explicit(&max_alloc_size, memory_order_relaxed))
         return NULL;
 
+    /*POSIX（Portable Operating System Interface for Unix）是一个由 IEEE 制定的标准，
+    旨在定义和规范 UNIX 操作系统的接口和行为，从而实现 UNIX 系统及其类 UNIX 系统之间的可移植性。
+    这一标准的目的是为了在不同的 UNIX 系统之间提供一致的编程接口和功能，使得软件能够在多种 UNIX 环境中无缝运行。*/
+
+    /*对齐内存分配方法是一种确保分配的内存块在特定内存地址上进行对齐的技术。这个技术通常用于满足硬件、架构、或性能优化方面的需求。*/
+
+    /*ALIGN 是内存对齐的大小，根据平台和架构的不同可能有所不同。
+    如果支持 posix_memalign ，则使用 posix_memalign，这是 POSIX 系统上常用的对齐内存分配方法。
+    HAVE_ALIGNED_MALLOC 是 Windows 上 _aligned_malloc 的检查，它用于分配对齐的内存。
+    HAVE_MEMALIGN 使用 memalign 分配对齐的内存，这是另一种旧式内存对齐方法。
+    如果没有上述特性，则使用标准的 malloc。*/
 #if HAVE_POSIX_MEMALIGN
     if (size) //OS X on SDK 10.6 has a broken posix_memalign implementation
     if (posix_memalign(&ptr, ALIGN, size))

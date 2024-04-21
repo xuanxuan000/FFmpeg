@@ -153,7 +153,9 @@ typedef struct FrameData {
 
 /* Common struct for handling all types of decoded data and allocated render buffers. */
 typedef struct Frame {
+    // AVFrame 是 FFmpeg 中用于存储解码数据的核心数据结构。它可以包含视频帧、音频帧或其他类型的数据。
     AVFrame *frame;
+    // 用于存储字幕数据。AVSubtitle 是 FFmpeg 中表示字幕的结构体，包含了字幕文本、时间戳等信息。
     AVSubtitle sub;
     int serial;
     double pts;           /* presentation timestamp for the frame */
@@ -162,8 +164,11 @@ typedef struct Frame {
     int width;
     int height;
     int format;
+    // 帧的纵横比 (Sample Aspect Ratio)，用于调整帧在不同显示设备上的比例。
     AVRational sar;
+    // 用于指示帧是否已上传到 GPU 或其他渲染目标。这在使用硬件加速渲染时很有用。
     int uploaded;
+    // 表示是否需要垂直翻转帧。这在某些图形处理情况下需要，如特定编码格式或渲染需求。
     int flip_v;
 } Frame;
 
@@ -229,9 +234,12 @@ typedef struct VideoState {
     Clock vidclk;
     Clock extclk;
 
-    // 帧队列，分别用于存储视频、字幕、音频帧
+    /*帧队列，分别用于存储视频、字幕、音频帧*/
+    // Picture Queue 视频帧队列
     FrameQueue pictq;
+    // Subtitle Queue 字幕帧队列
     FrameQueue subpq;
+    // Sample Queue 音频帧队列
     FrameQueue sampq;
 
     // 解码器结构体，分别用于音频、视频、字幕解码
@@ -3202,6 +3210,8 @@ static VideoState *stream_open(const char *filename,
     is->last_video_stream = is->video_stream = -1;
     is->last_audio_stream = is->audio_stream = -1;
     is->last_subtitle_stream = is->subtitle_stream = -1;
+    // av_strdup 用于保持函数参数或数据结构中的字符串数据的独立性，确保即使原始字符串发生变化，副本仍然保持不变。
+    // 这在处理输入文件名或其他关键字符串信息时特别有用，因为它确保该数据在整个应用程序的生命周期中是稳定的。
     is->filename = av_strdup(filename);
     if (!is->filename)
         goto fail;
@@ -3210,6 +3220,7 @@ static VideoState *stream_open(const char *filename,
     is->xleft   = 0;
 
     /* start video display */
+    // TODO READ
     if (frame_queue_init(&is->pictq, &is->videoq, VIDEO_PICTURE_QUEUE_SIZE, 1) < 0)
         goto fail;
     if (frame_queue_init(&is->subpq, &is->subtitleq, SUBPICTURE_QUEUE_SIZE, 0) < 0)
