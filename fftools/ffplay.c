@@ -3941,12 +3941,15 @@ int main(int argc, char **argv)
         }
     }
 
+    // 打开指定的媒体流
     is = stream_open(input_filename, file_iformat);
     if (!is) {
         av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
         do_exit(NULL);
     }
 
+    /*如果流成功打开，代码将调用 event_loop 进入事件循环。事件循环是 ffplay 的核心部分，负责处理用户交互、播放视频、音频同步、处理事件等。
+    event_loop 会一直运行，直到程序结束。它可能包括处理 SDL 事件、解码和显示视频帧、同步音视频、处理用户输入等。*/
     event_loop(is);
 
     /* never returns */
