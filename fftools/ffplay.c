@@ -114,11 +114,17 @@ typedef struct MyAVPacketList {
 } MyAVPacketList;
 
 typedef struct PacketQueue {
+    // AVFifo 是一种先进先出的数据结构，适合于实现队列。是数据存储缓存区域
     AVFifo *pkt_list;
+    // 当前队列中数据包的数量。
     int nb_packets;
+    // 队列的总大小，通常是所有数据包大小的总和。这有助于监控队列的内存占用情况。
     int size;
+    // 队列中所有数据包的总时长。这在音视频同步和管理播放进度方面很重要。
     int64_t duration;
+    // 标记是否请求终止。若设置为 1，则通常表示需要中止相关操作，如停止读取数据包。
     int abort_request;
+    // 一个序列号，用于区分不同的流或队列状态。常用于同步音视频等用途。
     int serial;
     SDL_mutex *mutex;
     SDL_cond *cond;
@@ -174,16 +180,39 @@ typedef struct Frame {
 
 typedef struct FrameQueue {
     Frame queue[FRAME_QUEUE_SIZE];
+    /*FFplay 播放器里面，其实有两个读索引。
+    第一个读索引 也就是 rindex，这其实是用来读取上一帧已经播放的AVFrame的。
+    第二个读索引 也就是 rindex + rindex_shown ，这个是用来读取下一个准备播放的 AVFrame 的：*/
+    // 队列的读索引，指向当前可以读取的帧。
     int rindex;
+    // 队列的写索引，指向可以写入新帧的位置。
     int windex;
+    // 这个字段不是内存大小，而是个数，代表 当前队列已经缓存了多少个 Frame。
     int size;
+    // 队列最多缓存多少个 Frame，max_size可能比FRAME_QUEUE_SIZE小。
     int max_size;
+    // 如果设置为 1，则队列会保留最后一个帧，即使它被“读取”了。当SDL窗口变小的时候，ffplay 可以取上一帧Frame，重新渲染 texture 来适应缩小后的窗口大小。
     int keep_last;
+    // 指示当前读索引是否已经显示/处理。这个标志可以用于跟踪哪些帧已经被显示/处理。
     int rindex_shown;
+    // 互斥锁，用于确保线程安全。多个线程可能会读取或写入队列，因此需要互斥锁来防止竞争条件。
     SDL_mutex *mutex;
+    // 条件变量，通常用于实现生产者/消费者模式。用于 解码线程 跟 播放线程 通信
     SDL_cond *cond;
+    // 来源，FrameQueue 的数据是从哪一个 PacketQueue 里来的。
     PacketQueue *pktq;
 } FrameQueue;
+/*FrameQueue 相关函数:
+1. frame_queue_init()，初始化 FrameQueue 的函数。
+2. frame_queue_peek_next()，读取当前准备播放的帧的下一个帧。
+3. frame_queue_peek_last()，读取上一帧已经播放的Frame
+4. frame_queue_peek_writable()，peek 出一个可以写的 Frame，此函数可能会阻塞。
+5. frame_queue_peek_readable()，peek 出一个可以准备播放的 Frame，此函数可能会阻塞。
+6. frame_queue_push()，偏移 windex （写索引），+1。
+7. frame_queue_next()，偏移 rindex （读索引），+1。
+8. frame_queue_last_pos()，获取当前播放到文件的那个位置，位置是内存数据的位置。例如 100M 的mp4，播放到了 50M。
+9. frame_queue_destory()，销毁FrameQueue 的函数。*/
+/*有趣的命名: peek 与 get*/
 
 enum {
     AV_SYNC_AUDIO_MASTER, /* default choice */
@@ -249,6 +278,10 @@ typedef struct VideoState {
 
     int audio_stream;
 
+    /* 音视频同步类型,取值有: 
+    AV_SYNC_AUDIO_MASTER：音频为主。这种情况下，音频时钟作为主时钟，视频的播放速度将调整以匹配音频的时间。这种方式在音频同步性很重要的场景中使用，例如音乐播放。
+    AV_SYNC_VIDEO_MASTER：视频为主。在这种情况下，视频时钟作为主时钟，音频播放速度会调整以匹配视频的时间。这种方式适用于视频内容具有很高的准确性需求的场景，例如电影播放。
+    AV_SYNC_EXTERNAL_CLOCK：外部时钟。在这种情况下，播放器使用一个外部的时钟源进行音视频同步。外部时钟可能来自系统时间或其他应用程序的时钟。这种方式适用于同步不同来源的数据流。*/
     int av_sync_type;
 
     double audio_clock;
@@ -1427,15 +1460,21 @@ static int video_open(VideoState *is)
 /* display the current picture, if any */
 static void video_display(VideoState *is)
 {
+    // 确保视频窗口已经打开
     if (!is->width)
         video_open(is);
 
+    // 在渲染新的图像之前，先设置渲染器的绘制颜色为黑色，然后调用 SDL_RenderClear 清空渲染器。重置画布以便为新的图像做准备。
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
+    /*根据当前的显示模式，选择渲染的方式：
+        如果当前有音频流且显示模式不是视频模式，则调用 video_audio_display 渲染音频相关的可视化效果。
+        如果当前有视频流，则调用 video_image_display 渲染视频帧。这是最常见的情况。*/
     if (is->audio_st && is->show_mode != SHOW_MODE_VIDEO)
         video_audio_display(is);
     else if (is->video_st)
         video_image_display(is);
+    // 在所有渲染操作完成后，调用 SDL_RenderPresent 将渲染器的内容推送到窗口或屏幕上。这一步将把绘制好的图像显示给用户。
     SDL_RenderPresent(renderer);
 }
 
@@ -1640,6 +1679,7 @@ static void update_video_pts(VideoState *is, double pts, int serial)
 }
 
 /* called to display each frame */
+// 负责视频播放的刷新和同步，处理帧队列并管理视频渲染。其功能包括控制视频帧刷新、同步、字幕处理等。
 static void video_refresh(void *opaque, double *remaining_time)
 {
     VideoState *is = opaque;
@@ -1753,6 +1793,7 @@ retry:
         }
 display:
         /* display picture */
+        // 播放 渲染显示
         if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
             video_display(is);
     }
@@ -2868,6 +2909,7 @@ static int is_realtime(AVFormatContext *s)
 }
 
 /* this thread gets the stream from the disk or the network */
+// 解封装获取数据包  并将数据包放入对应的解码队列中。
 static int read_thread(void *arg)
 {
     VideoState *is = arg;
@@ -3220,7 +3262,7 @@ static VideoState *stream_open(const char *filename,
     is->xleft   = 0;
 
     /* start video display */
-    // TODO READ
+    /*初始化帧队列,建立帧队列与数据包缓存队列的映射关系*/
     if (frame_queue_init(&is->pictq, &is->videoq, VIDEO_PICTURE_QUEUE_SIZE, 1) < 0)
         goto fail;
     if (frame_queue_init(&is->subpq, &is->subtitleq, SUBPICTURE_QUEUE_SIZE, 0) < 0)
@@ -3228,20 +3270,26 @@ static VideoState *stream_open(const char *filename,
     if (frame_queue_init(&is->sampq, &is->audioq, SAMPLE_QUEUE_SIZE, 1) < 0)
         goto fail;
 
+    /*初始化数据包缓存队列*/
     if (packet_queue_init(&is->videoq) < 0 ||
         packet_queue_init(&is->audioq) < 0 ||
         packet_queue_init(&is->subtitleq) < 0)
         goto fail;
 
+    /*条件变量初始化*/
     if (!(is->continue_read_thread = SDL_CreateCond())) {
         av_log(NULL, AV_LOG_FATAL, "SDL_CreateCond(): %s\n", SDL_GetError());
         goto fail;
     }
 
+    /*时钟初始化*/
     init_clock(&is->vidclk, &is->videoq.serial);
     init_clock(&is->audclk, &is->audioq.serial);
     init_clock(&is->extclk, &is->extclk.serial);
+
+    // 时钟序列号初始化
     is->audio_clock_serial = -1;
+    // 音量
     if (startup_volume < 0)
         av_log(NULL, AV_LOG_WARNING, "-volume=%d < 0, setting to 0\n", startup_volume);
     if (startup_volume > 100)
@@ -3251,6 +3299,7 @@ static VideoState *stream_open(const char *filename,
     is->audio_volume = startup_volume;
     is->muted = 0;
     is->av_sync_type = av_sync_type;
+    // 创建读取线程 立即开始 解封装读取数据包，解码将数据包转换为帧
     is->read_tid     = SDL_CreateThread(read_thread, "read_thread", is);
     if (!is->read_tid) {
         av_log(NULL, AV_LOG_FATAL, "SDL_CreateThread(): %s\n", SDL_GetError());
@@ -3360,8 +3409,11 @@ static void toggle_audio_display(VideoState *is)
 
 static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
     double remaining_time = 0.0;
+    // 调用此函数以确保 SDL 的事件队列被更新, 使事件可以被正确获取。
     SDL_PumpEvents();
+    // 检查是否有事件发生
     while (!SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT)) {
+        // 隐藏光标
         if (!cursor_hidden && av_gettime_relative() - cursor_last_shown > CURSOR_HIDE_DELAY) {
             SDL_ShowCursor(0);
             cursor_hidden = 1;
@@ -3370,6 +3422,7 @@ static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
             av_usleep((int64_t)(remaining_time * 1000000.0));
         remaining_time = REFRESH_RATE;
         if (is->show_mode != SHOW_MODE_NONE && (!is->paused || is->force_refresh))
+            // 继续刷新播放
             video_refresh(is, &remaining_time);
         SDL_PumpEvents();
     }
@@ -3410,7 +3463,9 @@ static void event_loop(VideoState *cur_stream)
 
     for (;;) {
         double x;
+        // 如果没有事件发生就一直刷新播放视频
         refresh_loop_wait_event(cur_stream, &event);
+        // 处理事件
         switch (event.type) {
         case SDL_KEYDOWN:
             if (exit_on_keydown || event.key.keysym.sym == SDLK_ESCAPE || event.key.keysym.sym == SDLK_q) {
@@ -3934,11 +3989,21 @@ int main(int argc, char **argv)
             }
         /*SDL 渲染器相较于 Vulkan 等底层 API，性能较低，特别是在需要大量并行渲染或复杂图形操作的情况下。
         SDL 渲染器主要用于 2D 图形，对于 3D 图形和高级效果支持较少。*/
-        // 如果没有 Vulkan 渲染器或 Vulkan 渲染器创建失败，尝试使用 SDL 渲染器。
+
+        /*FFmpeg 的主要功能是多媒体处理，而不是图形渲染。
+        对于需要图形渲染的部分，如显示视频帧或执行硬件加速，FFmpeg 可能会选择不同的后端，
+        包括 OpenGL、Vulkan、DirectX 等，具体取决于平台、硬件和性能需求。
+        FFmpeg 使用什么技术取决于它的目标平台和应用场景，而并非仅限于一个特定的技术。*/
+
+        // 如果没有 Vulkan 渲染器或 Vulkan 渲染器创建失败，尝试使用 SDL 创建渲染器。具体的类型会根据平台来制定。
         } else {
+            // 尝试创建一个 SDL 渲染器，指定窗口和渲染器标识。
+            // 标志 SDL_RENDERER_ACCELERATED 表示使用硬件加速（如果可用）
+            // 而 SDL_RENDERER_PRESENTVSYNC 启用垂直同步（vsync），以防止屏幕撕裂。
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
             if (!renderer) {
                 av_log(NULL, AV_LOG_WARNING, "Failed to initialize a hardware accelerated renderer: %s\n", SDL_GetError());
+                // 创建一个不使用硬件加速的渲染器
                 renderer = SDL_CreateRenderer(window, -1, 0);
             }
             if (renderer) {
