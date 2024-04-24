@@ -1522,6 +1522,7 @@ static int read_frame_internal(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
+// 解封装   从媒体流中读取数据包，并将其传递给调用者，以供解码和处理
 int av_read_frame(AVFormatContext *s, AVPacket *pkt)
 {
     FFFormatContext *const si = ffformatcontext(s);

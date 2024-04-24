@@ -1879,10 +1879,11 @@ static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double 
     return 0;
 }
 
+// 视频解码
 static int get_video_frame(VideoState *is, AVFrame *frame)
 {
     int got_picture;
-
+    // 调用 decoder_decode_frame 从视频解码器获取一帧解码后的数据，并存储在 frame 中。
     if ((got_picture = decoder_decode_frame(&is->viddec, frame, NULL)) < 0)
         return -1;
 
@@ -2257,7 +2258,9 @@ static int video_thread(void *arg)
     double pts;
     double duration;
     int ret;
+    // 获取stream timebase
     AVRational tb = is->video_st->time_base;
+    // 获取帧率，以便计算每帧picture的duration
     AVRational frame_rate = av_guess_frame_rate(is->ic, is->video_st, NULL);
 
     AVFilterGraph *graph = NULL;
@@ -2271,7 +2274,9 @@ static int video_thread(void *arg)
     if (!frame)
         return AVERROR(ENOMEM);
 
+    // 循环取出视频解码的帧数据
     for (;;) {
+        // 获取解码后的视频帧
         ret = get_video_frame(is, frame);
         if (ret < 0)
             goto the_end;
@@ -2951,6 +2956,7 @@ static int read_thread(void *arg)
         av_dict_set(&format_opts, "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
         scan_all_pmts_set = 1;
     }
+    // 打开媒体文件或媒体流，并创建一个 AVFormatContext 来处理输入的多媒体内容
     err = avformat_open_input(&ic, is->filename, is->iformat, &format_opts);
     if (err < 0) {
         print_error(is->filename, err);
@@ -2967,6 +2973,7 @@ static int read_thread(void *arg)
     }
     is->ic = ic;
 
+    // 是否生成 PTS（Presentation Time Stamp）显示时间戳
     if (genpts)
         ic->flags |= AVFMT_FLAG_GENPTS;
 
@@ -2988,6 +2995,7 @@ static int read_thread(void *arg)
             av_dict_free(&opts[i]);
         av_freep(&opts);
 
+        // 如果 avformat_find_stream_info 返回负值，说明查找流信息失败。这可能表示文件不包含有效的流，或者解封装器无法识别。
         if (err < 0) {
             av_log(NULL, AV_LOG_WARNING,
                    "%s: could not find codec parameters\n", is->filename);
@@ -2999,17 +3007,24 @@ static int read_thread(void *arg)
     if (ic->pb)
         ic->pb->eof_reached = 0; // FIXME hack, ffplay maybe should not use avio_feof() to test for the end
 
+    // 是否通过字节来进行寻址（seek）
     if (seek_by_bytes < 0)
         seek_by_bytes = !(ic->iformat->flags & AVFMT_NO_BYTE_SEEK) &&
                         !!(ic->iformat->flags & AVFMT_TS_DISCONT) &&
                         strcmp("ogg", ic->iformat->name);
 
+    // 在时间戳连续的格式中，帧之间的时间间隔通常是稳定和一致的，较长的最大帧持续时间不会导致播放异常。
+    /*is->max_frame_duration 是最大帧持续时间。
+    如果输入格式支持时间戳不连续，则设置为 10.0 秒；否则，设置为 3600.0 秒。这是为了防止帧过长导致的问题。*/
     is->max_frame_duration = (ic->iformat->flags & AVFMT_TS_DISCONT) ? 10.0 : 3600.0;
 
+    /*如果没有自定义窗口标题，代码会尝试从 AVFormatContext 的元数据中获取标题。
+    如果存在标题元数据，则窗口标题将包含媒体文件的标题和输入文件名。*/
     if (!window_title && (t = av_dict_get(ic->metadata, "title", NULL, 0)))
         window_title = av_asprintf("%s - %s", t->value, input_filename);
 
     /* if seeking requested, we execute it */
+    // 如果 start_time 指定了寻址时间，则代码尝试在打开文件后执行寻址。
     if (start_time != AV_NOPTS_VALUE) {
         int64_t timestamp;
 
@@ -3024,19 +3039,26 @@ static int read_thread(void *arg)
         }
     }
 
+    // 检查输入流是否是实时流（例如，网络直播或摄像头输入）
     is->realtime = is_realtime(ic);
 
+    // 如果 show_status 为真，调用 av_dump_format 函数打印输入文件或流的格式信息。这通常用于调试和显示输入文件的详细信息。
     if (show_status)
         av_dump_format(ic, 0, is->filename, 0);
 
+    // 遍历所有的流 (ic->nb_streams)，根据 wanted_stream_spec 和 st_index 数组的内容，选择特定的流。
     for (i = 0; i < ic->nb_streams; i++) {
         AVStream *st = ic->streams[i];
         enum AVMediaType type = st->codecpar->codec_type;
         st->discard = AVDISCARD_ALL;
+        /*wanted_stream_spec 是一个指定的数组，表示希望选择的流类型（如音频、视频、字幕等）。
+        st_index 是记录每个流类型的索引。初始值为 -1 表示还未选择流。
+        avformat_match_stream_specifier 用于匹配用户指定的流规格。如果匹配成功，则记录流的索引。*/ 
         if (type >= 0 && wanted_stream_spec[type] && st_index[type] == -1)
             if (avformat_match_stream_specifier(ic, st, wanted_stream_spec[type]) > 0)
                 st_index[type] = i;
     }
+    // 如果无法找到指定的流类型，记录错误信息。
     for (i = 0; i < AVMEDIA_TYPE_NB; i++) {
         if (wanted_stream_spec[i] && st_index[i] == -1) {
             av_log(NULL, AV_LOG_ERROR, "Stream specifier %s does not match any %s stream\n", wanted_stream_spec[i], av_get_media_type_string(i));
@@ -3044,6 +3066,7 @@ static int read_thread(void *arg)
         }
     }
 
+    // 查找最佳视频/音频/字幕流
     if (!video_disable)
         st_index[AVMEDIA_TYPE_VIDEO] =
             av_find_best_stream(ic, AVMEDIA_TYPE_VIDEO,
@@ -3063,6 +3086,10 @@ static int read_thread(void *arg)
                                  st_index[AVMEDIA_TYPE_VIDEO]),
                                 NULL, 0);
 
+    /*确认是否存在有效的视频流。
+    获取视频流的参数信息。
+    计算视频的样本长宽比。
+    根据视频的宽度、高度和 SAR，设置播放窗口的默认大小。*/
     is->show_mode = show_mode;
     if (st_index[AVMEDIA_TYPE_VIDEO] >= 0) {
         AVStream *st = ic->streams[st_index[AVMEDIA_TYPE_VIDEO]];
@@ -3072,18 +3099,23 @@ static int read_thread(void *arg)
             set_default_window_size(codecpar->width, codecpar->height, sar);
     }
 
+// 解码 stream_component_open
+
     /* open the streams */
+    // 打开音频流   开启音频解码线程
     if (st_index[AVMEDIA_TYPE_AUDIO] >= 0) {
         stream_component_open(is, st_index[AVMEDIA_TYPE_AUDIO]);
     }
 
     ret = -1;
+    // 打开视频流   开启音频解码线程
     if (st_index[AVMEDIA_TYPE_VIDEO] >= 0) {
         ret = stream_component_open(is, st_index[AVMEDIA_TYPE_VIDEO]);
     }
     if (is->show_mode == SHOW_MODE_NONE)
         is->show_mode = ret >= 0 ? SHOW_MODE_VIDEO : SHOW_MODE_RDFT;
 
+    // 打开字幕流   开启字幕解码线程
     if (st_index[AVMEDIA_TYPE_SUBTITLE] >= 0) {
         stream_component_open(is, st_index[AVMEDIA_TYPE_SUBTITLE]);
     }
@@ -3095,12 +3127,15 @@ static int read_thread(void *arg)
         goto fail;
     }
 
+    // 如果 is->realtime 为真，表示这是实时流。在这种情况下，代码将 infinite_buffer 设置为 1，允许无限制的缓冲，这对于处理实时流很重要。
     if (infinite_buffer < 0 && is->realtime)
         infinite_buffer = 1;
 
+    // 主要的循环读取部分 从输入流中读取数据包，并将其放入相应的队列中供处理。
     for (;;) {
         if (is->abort_request)
             break;
+        // 多线程下可能多次暂停继续  使用两个变量确保线程安全和正确的状态检测
         if (is->paused != is->last_paused) {
             is->last_paused = is->paused;
             if (is->paused)
@@ -3108,6 +3143,8 @@ static int read_thread(void *arg)
             else
                 av_read_play(ic);
         }
+        // RTSP（Real Time Streaming Protocol）和 MMSH（Microsoft Media Server HTTP）是流式协议
+        // 对于 RTSP 或 MMSH 流，如果处于暂停状态，会稍作等待（10 毫秒），然后继续循环。这种短暂的等待可以避免尝试读取更多的数据包。
 #if CONFIG_RTSP_DEMUXER || CONFIG_MMSH_PROTOCOL
         if (is->paused &&
                 (!strcmp(ic->iformat->name, "rtsp") ||
@@ -3118,6 +3155,10 @@ static int read_thread(void *arg)
             continue;
         }
 #endif
+        /*如果 is->seek_req 为真，则表示需要进行跳转（seek）。
+        计算跳转的目标、最小值和最大值，然后调用 avformat_seek_file 进行跳转。
+        跳转成功后，刷新队列、重置时钟、处理其他状态。
+        处理完后，清空 is->seek_req ，以表示跳转请求已经处理完毕。*/
         if (is->seek_req) {
             int64_t seek_target = is->seek_pos;
             int64_t seek_min    = is->seek_rel > 0 ? seek_target - is->seek_rel + 2: INT64_MIN;
@@ -3148,6 +3189,10 @@ static int read_thread(void *arg)
             if (is->paused)
                 step_to_next_frame(is);
         }
+
+        /*如果 is->queue_attachments_req 为真，代码会检查视频流是否有附带图片。
+        如果有，将图片打包放入视频队列，并添加一个空包表示结束。
+        然后清空 is->queue_attachments_req 。*/
         if (is->queue_attachments_req) {
             if (is->video_st && is->video_st->disposition & AV_DISPOSITION_ATTACHED_PIC) {
                 if ((ret = av_packet_ref(pkt, &is->video_st->attached_pic)) < 0)
@@ -3159,6 +3204,7 @@ static int read_thread(void *arg)
         }
 
         /* if the queue are full, no need to read more */
+        // 如果队列已满，则不需要再读取
         if (infinite_buffer<1 &&
               (is->audioq.size + is->videoq.size + is->subtitleq.size > MAX_QUEUE_SIZE
             || (stream_has_enough_packets(is->audio_st, is->audio_stream, &is->audioq) &&
@@ -3180,6 +3226,12 @@ static int read_thread(void *arg)
                 goto fail;
             }
         }
+
+// 解封装   av_read_frame
+
+        /*使用 av_read_frame 读取数据包。如果读取失败并且是因为文件结束（EOF），则向队列中插入空包，并设置 is->eof 为真。
+        如果出现其他错误，则等待一段时间（10 毫秒），然后继续循环。
+        否则，继续处理正常读取的数据包。*/
         ret = av_read_frame(ic, pkt);
         if (ret < 0) {
             if ((ret == AVERROR_EOF || avio_feof(ic->pb)) && !is->eof) {
@@ -3205,6 +3257,9 @@ static int read_thread(void *arg)
             is->eof = 0;
         }
         /* check if packet is in play range specified by user, then queue, otherwise discard */
+        /*代码检查数据包所属的流，并判断它是否在指定的播放范围内。
+        如果在播放范围内，将数据包放入相应的队列中（音频、视频、字幕）。
+        如果数据包不属于任何流，或者不在播放范围内，则释放数据包。*/
         stream_start_time = ic->streams[pkt->stream_index]->start_time;
         pkt_ts = pkt->pts == AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
         pkt_in_play_range = duration == AV_NOPTS_VALUE ||
@@ -3213,11 +3268,14 @@ static int read_thread(void *arg)
                 (double)(start_time != AV_NOPTS_VALUE ? start_time : 0) / 1000000
                 <= ((double)duration / 1000000);
         if (pkt->stream_index == is->audio_stream && pkt_in_play_range) {
+            // 放入音频队列
             packet_queue_put(&is->audioq, pkt);
         } else if (pkt->stream_index == is->video_stream && pkt_in_play_range
                    && !(is->video_st->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
+            // 放入视频队列
             packet_queue_put(&is->videoq, pkt);
         } else if (pkt->stream_index == is->subtitle_stream && pkt_in_play_range) {
+            // 放入字幕队列
             packet_queue_put(&is->subtitleq, pkt);
         } else {
             av_packet_unref(pkt);
